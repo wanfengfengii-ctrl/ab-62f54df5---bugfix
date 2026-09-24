@@ -225,6 +225,70 @@ def test_self_intersecting_source_reported(client):
     assert {e["index"] for e in fd["source_entities"]} == {0, 2}
 
 
+# The reported closed tool path has an early self-intersection (entities 0
+# and 2) and a separate later contact in its tail.  The early defect must be
+# reported at its exact point; the tail contact must not mask it or turn the
+# request into a 500.
+_REPORTED_CONTOUR = [
+    {"type": "line", "start": ["0", "0"], "end": ["3", "1"]},
+    {"type": "line", "start": ["3", "1"], "end": ["1", "3"]},
+    {"type": "line", "start": ["1", "3"], "end": ["0", "0"]},
+    {"type": "line", "start": ["0", "0"], "end": ["-1", "3"]},
+    {"type": "line", "start": ["-1", "3"], "end": ["2", "-4"]},
+    {"type": "line", "start": ["2", "-4"], "end": ["0", "0"]},
+]
+
+# Same early bow, tail rerouted well clear of the early pieces.
+_TAIL_REMOVED_CONTROL = [
+    {"type": "line", "start": ["0", "0"], "end": ["3", "1"]},
+    {"type": "line", "start": ["3", "1"], "end": ["1", "3"]},
+    {"type": "line", "start": ["1", "3"], "end": ["0", "0"]},
+    {"type": "line", "start": ["0", "0"], "end": ["-4", "0"]},
+    {"type": "line", "start": ["-4", "0"], "end": ["-4", "-4"]},
+    {"type": "line", "start": ["-4", "-4"], "end": ["0", "0"]},
+]
+
+
+def test_reported_contour_early_self_intersection(client):
+    code, body = post(client, {"contour": _REPORTED_CONTOUR,
+                               "tool_radius": "0.1", "side": "left"})
+    assert code == 409, body
+    assert body["status"] == "unsafe"
+    fd = body["error"]["first_defect"]
+    assert body["error"]["code"] == "self_intersection"
+    # Earliest defect is on piece 0 (sourced from entities 0 and 2).
+    assert fd["tool_path_position"]["piece_index"] == 0
+    assert fd["tool_path_position"]["intra"] == "interior"
+    assert [e["index"] for e in fd["source_entities"]] == [0, 2]
+    # Exact, recomputable point: (sqrt(10)/20, sqrt(10)/20).
+    expected = {"*": [{"rational": [1, 20]},
+                      {"sqrt": {"rational": [10, 1]}}]}
+    assert fd["exact_point"]["x"]["exact"] == expected
+    assert fd["exact_point"]["y"]["exact"] == expected
+    assert math.isclose(
+        float(fd["exact_point"]["x"]["decimal"]),
+        math.sqrt(10) / 20, rel_tol=1e-9,
+    )
+
+
+def test_early_defect_unchanged_without_tail_contact(client):
+    code_full, body_full = post(
+        client, {"contour": _REPORTED_CONTOUR,
+                 "tool_radius": "0.1", "side": "left"})
+    code_ctrl, body_ctrl = post(
+        client, {"contour": _TAIL_REMOVED_CONTROL,
+                 "tool_radius": "0.1", "side": "left"})
+    assert code_full == code_ctrl == 409
+    f, g = (body_full["error"]["first_defect"],
+            body_ctrl["error"]["first_defect"])
+    assert body_ctrl["error"]["code"] == "self_intersection"
+    assert f["tool_path_position"] == g["tool_path_position"]
+    assert f["source_entities"] == g["source_entities"]
+    assert f["exact_point"]["x"]["exact"] == g["exact_point"]["x"]["exact"]
+    assert f["exact_point"]["y"]["exact"] == g["exact_point"]["y"]["exact"]
+
+
+
 def test_oversized_tool_narrow_slot_rejected(client):
     code, body = post(client, {"contour": [
         {"type": "line", "start": ["0", "0"], "end": ["3", "0"]},

@@ -74,6 +74,33 @@ def test_no_spurious_extension_for_perfect_square():
     assert f.level == base_level
 
 
+def test_nested_root_whose_delta_reuses_top_variable_terminates():
+    # For x = A + B*s_m the recipe needs delta = sqrt(A**2 - B**2 D_m) in the
+    # subfield *below* s_m.  Here D_m = 8, A = 4, B = 1 gives delta**2 = 8,
+    # whose rational square-class solver returns s_m itself (root.k > m), not
+    # a subfield element.  Such x is not a square in the current field and a
+    # new radical must be adjoined.  Accepting the in-tower "root" made the
+    # A +/- delta split recurse on the same variable forever.
+    f = Field()
+    s8 = f.square_root(f.rational(8))
+    x = f.add(f.rational(4), s8)
+    root = f.square_root(x)  # must terminate, not RecursionError
+    assert f.eq(f.sq(root), x)
+    assert f.sign(root) > 0
+
+
+def test_rational_class_root_above_split_variable_rejected():
+    # Mirrors the reported contour: s1**2 = 8 registered alongside an earlier
+    # radical; sqrt(1/50 - s1/200) must terminate and be a genuine square root.
+    f = Field()
+    f.square_root(f.rational(10))
+    s8 = f.square_root(f.rational(8))
+    x = f.add(f.rational(F(1, 50)), f.scale(s8, F(-1, 200)))
+    root = f.square_root(x)
+    assert f.eq(f.sq(root), x)
+    assert f.sign(root) > 0
+
+
 # ------------------------------------------------------------- arc logic
 def _arc_from(f, center, rs, re_, sense=CCW, full=False, radius=1):
     c = v(f, *center)

@@ -359,7 +359,11 @@ class Field:
             return None
         delta2 = self.sub(self.sq(A), self.mul(self.sq(B), Dm))
         root = self.sqrt_exact(delta2)
-        if root is None:
+        # delta must lie in the subfield F_{m-1}: a root that reuses s_m
+        # (or a higher adjoined variable) invalidates the A +/- delta split
+        # and would make the recursive calls re-enter on the same variable
+        # forever instead of adjoining a genuinely new radical.
+        if root is None or root.k > m:
             return None
         half = self.rational(Fraction(1, 2))
         two = self.rational(2)
@@ -371,7 +375,8 @@ class Field:
                 continue
             p = self.sqrt_exact(p2)
             q = self.sqrt_exact(q2)
-            if p is None or q is None:
+            # p and q are coefficients in F_{m-1} of 1 and s_m.
+            if p is None or q is None or p.k > m or q.k > m:
                 continue
             # Enforce 2 p q == B by flipping q's sign when necessary.
             pq2 = self.mul(two, self.mul(p, q))
