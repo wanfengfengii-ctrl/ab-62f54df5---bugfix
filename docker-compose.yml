@@ -1,0 +1,50 @@
+# Workshop deployment of the exact CAM compensation audit API.
+#
+# Host port is configurable through the HOST_PORT environment variable:
+#   HOST_PORT=9090 docker compose up --build
+services:
+  cam-comp-audit:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: "8080"
+      APP_WORKERS: "2"
+      APP_LOG_LEVEL: info
+    ports:
+      # Host-side port comes from the .env / shell variable, default 8080.
+      - "${HOST_PORT:-8080}:8080"
+    restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json,urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3); sys.exit(0 if json.load(r).get('status')=='ok' else 1)"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+  verify:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      cam-comp-audit:
+        condition: service_healthy
+    entrypoint: ["python", "-c"]
+    command:
+      - >-
+        import app.main,json,urllib.request;
+        base='http://cam-comp-audit:8080';
+        assert json.load(urllib.request.urlopen(base+'/health',timeout=5))['status']=='ok';
+        points=[['0','0'],['10','0'],['10','10'],['0','10']];
+        contour=[{'type':'line','start':points[i],'end':points[(i+1)%4]} for i in range(4)];
+        payload=json.dumps({'contour':contour,'tool_radius':'1','side':'left'}).encode();
+        request=urllib.request.Request(base+'/v1/audit',payload,{'Content-Type':'application/json'});
+        result=json.load(urllib.request.urlopen(request,timeout=10));
+        assert result['compensated_contour']['orientation']=='ccw';
+        assert len(result['compensated_contour']['pieces'])==4;
+        print('verify passed')
+    restart: "no"
