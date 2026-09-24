@@ -74,6 +74,36 @@ def test_no_spurious_extension_for_perfect_square():
     assert f.level == base_level
 
 
+def test_tower_square_root_does_not_steal_top_variable():
+    # Regression: while solving x = (p + q*s_m)^2, the norm root
+    # delta = sqrt(N(x)) must live in the subfield strictly below m.
+    # Here 1/5000 = (sqrt(8)/200)^2 is a square in the ambient field only
+    # through a variable that is itself the top decomposition variable;
+    # accepting it left p2 = (A + delta)/2 inside the same level and
+    # recursed forever (RecursionError surfaced as HTTP 500).
+    f = Field()
+    f.square_root(f.rational(10))   # s0
+    s8 = f.square_root(f.rational(8))  # s1
+    f.square_root(f.rational(58))   # s2
+
+    # The rational norm is a square via s1...
+    root_full = f.sqrt_exact(f.rational(F(1, 5000)))
+    assert root_full is not None
+    assert f.eq(f.sq(root_full), f.rational(F(1, 5000)))
+    assert f.eq(root_full, f.scale(s8, F(1, 200)))
+    # ...but not in the subfield below variable 1.
+    assert f.sqrt_exact(f.rational(F(1, 5000)), _below=1) is None
+
+    # 1/50 - sqrt(8)/200 is not a square of the tower as it stands; the
+    # public square_root must terminate and adjoin a genuinely new level.
+    x = f.sub(f.rational(F(1, 50)), f.scale(s8, F(1, 200)))
+    level_before = f.level
+    r = f.square_root(x)
+    assert f.level == level_before + 1
+    assert f.sign(r) > 0
+    assert f.eq(f.sq(r), x)
+
+
 # ------------------------------------------------------------- arc logic
 def _arc_from(f, center, rs, re_, sense=CCW, full=False, radius=1):
     c = v(f, *center)

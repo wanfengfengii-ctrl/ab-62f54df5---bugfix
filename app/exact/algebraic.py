@@ -325,20 +325,37 @@ class Field:
             return Element()
         return Element({tuple(sorted(mono)): c})
 
-    def sqrt_exact(self, x: Element) -> Optional[Element]:
-        """Positive y with y**2 == x, or None if x is not a square here."""
+    def sqrt_exact(self, x: Element, _below: Optional[int] = None) -> Optional[Element]:
+        """Positive y with y**2 == x, or None if x is not a square here.
+
+        When ``_below`` is given the answer is required to lie in the
+        subfield spanned by variables with index < ``_below``.  This is
+        mandatory inside the tower decomposition below: the norm root and
+        the two half-roots must belong to the subfield under s_m.  An
+        ambient-field root that itself involves s_m (e.g. a rational whose
+        square class only becomes a square through s_m) must NOT be accepted
+        there -- otherwise p2 = (A + delta)/2 still contains s_m and the
+        recursion never descends the tower.
+        """
         sx = self.sign(x)
         if sx < 0:
             return None
         if sx == 0:
             return Element()
+        if _below is not None and any(
+            (s and s[-1] >= _below) for s in x.terms
+        ):
+            return None
         used = {i for s in x.terms for i in s}
         if not used:
             a = x.terms[EMPTY]
-            r = self._rational_square_root(a)
-            if r is not None:
-                return Element({EMPTY: r})
-            return self._square_via_subsets(x)
+            rr = self._rational_square_root(a)
+            r = Element({EMPTY: rr}) if rr is not None else self._square_via_subsets(x)
+            if r is not None and _below is not None and any(
+                (s and s[-1] >= _below) for s in r.terms
+            ):
+                return None
+            return r
         m = max(used)
         a_t: Dict[Monomial, Fraction] = {}
         b_t: Dict[Monomial, Fraction] = {}
@@ -350,15 +367,17 @@ class Field:
         A, B = Element(a_t), Element(b_t)
         Dm = self.radicands[m]
         if not b_t:
-            r = self.sqrt_exact(A)
+            r = self.sqrt_exact(A, _below=m)
             if r is not None:
                 return r
-            q = self.sqrt_exact(self.mul(A, self.inv(Dm)))
+            q = self.sqrt_exact(self.mul(A, self.inv(Dm)), _below=m)
             if q is not None:
                 return self._with_var(q, m)
             return None
         delta2 = self.sub(self.sq(A), self.mul(self.sq(B), Dm))
-        root = self.sqrt_exact(delta2)
+        # delta = sqrt(N_{m}(x)) must be an element of the subfield below m;
+        # an answer that needs s_m means x has no square root in this field.
+        root = self.sqrt_exact(delta2, _below=m)
         if root is None:
             return None
         half = self.rational(Fraction(1, 2))
@@ -369,8 +388,10 @@ class Field:
             q2 = self.mul(self.sub(A, delta), self.inv(self.mul(two, Dm)))
             if self.sign(p2) < 0 or self.sign(q2) < 0:
                 continue
-            p = self.sqrt_exact(p2)
-            q = self.sqrt_exact(q2)
+            # p and q are coefficients in the (1, s_m) decomposition and so
+            # must live strictly below m.
+            p = self.sqrt_exact(p2, _below=m)
+            q = self.sqrt_exact(q2, _below=m)
             if p is None or q is None:
                 continue
             # Enforce 2 p q == B by flipping q's sign when necessary.

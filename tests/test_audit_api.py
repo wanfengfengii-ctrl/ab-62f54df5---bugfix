@@ -259,6 +259,70 @@ def test_tangent_nonadjacent_pinch_is_defect(client):
     }
 
 
+# -------------------------------------------------- repeated-vertex self-cut
+def _line(a, b):
+    return {"type": "line", "start": [str(a[0]), str(a[1])],
+            "end": [str(b[0]), str(b[1])]}
+
+
+def test_repeated_vertex_reports_earliest_self_intersection(client):
+    # Six lines through (0,0),(3,1),(1,3),(0,0),(-1,3),(2,-4) and back.
+    # The (0,0) repeat inserts prescribed fillets on a shared circle; the
+    # midpoint normalisation of that overlap previously sent the exact
+    # kernel into infinite recursion (HTTP 500 / internal_error) before the
+    # earlier crossing of offsets 0 and 2 could be reported.
+    pts = [(0, 0), (3, 1), (1, 3), (0, 0), (-1, 3), (2, -4)]
+    contour = [_line(pts[i], pts[(i + 1) % len(pts)])
+               for i in range(len(pts))]
+    code, body = post(client, {"contour": contour, "tool_radius": "0.1",
+                               "side": "left"})
+    assert code == 409
+    assert body["status"] == "unsafe"
+    err = body["error"]
+    assert err["code"] == "self_intersection"
+
+    fd = err["first_defect"]
+    assert {e["index"] for e in fd["source_entities"]} == {0, 2}
+    pos = fd["tool_path_position"]
+    assert pos["piece_index"] == 0 and pos["intra"] == "interior"
+
+    point = fd["exact_point"]
+    sqrt10_over_20 = {
+        "*": [
+            {"rational": [1, 20]},
+            {"sqrt": {"rational": [10, 1]}},
+        ]
+    }
+    assert point["x"]["exact"] == sqrt10_over_20
+    assert point["y"]["exact"] == sqrt10_over_20
+    assert point["x"]["decimal"].startswith("0.158113883")
+    assert point["y"]["decimal"].startswith("0.158113883")
+
+
+def test_repeated_vertex_first_defect_survives_without_later_contact(client):
+    # Control contour: the later loop is rerouted so the two fillets at the
+    # repeated (0,0) vertex no longer touch; the earlier verdict must be
+    # identical.
+    contour = [
+        _line((0, 0), (3, 1)),
+        _line((3, 1), (1, 3)),
+        _line((1, 3), (0, 0)),
+        _line((0, 0), (-3, 0)),
+        _line((-3, 0), (-3, -3)),
+        _line((-3, -3), (0, 0)),
+    ]
+    code, body = post(client, {"contour": contour, "tool_radius": "0.1",
+                               "side": "left"})
+    assert code == 409
+    err = body["error"]
+    assert err["code"] == "self_intersection"
+    fd = err["first_defect"]
+    assert {e["index"] for e in fd["source_entities"]} == {0, 2}
+    point = fd["exact_point"]
+    assert point["x"]["decimal"].startswith("0.158113883")
+    assert point["y"]["decimal"].startswith("0.158113883")
+
+
 # ----------------------------------------------------------- exact encoding
 def test_exact_expression_is_recomputable(client):
     code, body = post(client, {
